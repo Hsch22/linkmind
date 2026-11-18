@@ -1,0 +1,104 @@
+// OpenClaw settings for LinkMind. Applied by `scripts/dev.sh up` (openclaw config patch; idempotent; the
+// gateway hot-reloads them).
+//
+// Security: the agent reads untrusted content (other people's chat screenshots, article text), so it gets no
+// tool that can act on this Mac: no shell, no file access, no web, no browser/computer control, no messaging
+// other chats, no config/gateway control. Its only capability is the LinkMind MCP server; Core does any
+// fetching itself, behind a host allowlist.
+//
+// Testers (scripts/dev.sh add-tester) each get their own agent, bound to their own WeChat bot, whose only
+// tools are their own Core's (`lm_<name>__*`); scripts/tenants.py generates those agents, bindings and MCP
+// servers. The owner's agent below may only use `linkmind__*`.
+//
+// Speed: every model call costs ~2 s at the gateway, and the WeChat session used to resend its whole history
+// (screenshots included) on every turn. Each turn here is "save this" or "answer this", so the agent keeps
+// only a few recent turns and sees images small; Core reads the original files.
+{
+  session: { dmScope: "per-channel-peer" }, // per-chat sessions; required for the DM history window below
+  channels: { "openclaw-weixin": { dmHistoryLimit: 4 } }, // recent user turns kept in the prompt
+
+  tools: {
+    profile: "minimal",
+    alsoAllow: ["linkmind__*", "lm_*"], // LinkMind Core servers: the owner's and each tester's; narrowed per agent
+    deny: [
+      "group:runtime", // exec, process, code_execution
+      "group:fs", // read, write, edit, apply_patch
+      "group:web", // web_fetch, web_search
+      "group:ui", // browser, terminal, canvas, ...
+      "group:automation", // cron, gateway, plugins, openclaw
+      "group:nodes", // nodes, computer
+      "group:messaging", // message (send to other chats)
+      "group:sessions", // cross-session send/spawn
+      "group:memory",
+      "group:media", // view_image (reads arbitrary image paths), generators
+      "group:agents",
+    ],
+    toolSearch: false, // only a few tools: expose schemas directly
+    exec: { security: "deny" },
+    elevated: { enabled: false },
+    agentToAgent: { enabled: false }, // agents never reach each other's sessions
+    fs: { workspaceOnly: true },
+  },
+  plugins: {
+    // Loaded by default but unused here; several (computer use, browser, file transfer, device pairing)
+    // would widen what a prompt-injected agent or a LAN peer could reach.
+    deny: [
+      "anthropic", "bonjour", "browser", "canvas", "cua-computer", "device-pair",
+      "file-transfer", "geolocation", "github", "linux-node", "ollama", "talk-voice", "xai",
+    ],
+    entries: { anthropic: null, codex: null },
+  },
+  // Self-learning writes "learned skills" distilled from conversations and loads them into every later
+  // session. Conversations here contain third-party text, so that would be a persistent injection path.
+  skills: { workshop: { autonomous: { mode: "off" } } },
+  // No skills: OpenClaw otherwise loads bundled ops skills and the user's personal ~/.agents skills
+  // (Feishu/DingTalk CLIs etc.) into the prompt. The agent's whole job is described in AGENTS.md.
+  agents: {
+    // Every WeChat bot is bound to its person's agent; a bot without a binding reaches no agent at all.
+    ownership: "explicit",
+    entries: { main: { tools: { allow: ["linkmind__*"] } } },
+    defaults: {
+      skills: [],
+      // The agent's two model calls per turn are what the user waits for. 2026-11-09, Vectron gateway: a
+      // tool-call turn took 2.15 s on DeepSeek-V4-Flash vs 2.97 s on V4.1-Flash, with equally good calls.
+      model: { primary: "vectron/DeepSeek/DeepSeek-V4-Flash" },
+      models: {
+        "anthropic/claude-opus-5-5": null,
+        "vectron/DeepSeek/DeepSeek-V4-Flash": {},
+        "vectron/DeepSeek/DeepSeek-V4.1-Flash": {},
+      },
+      imageMaxDimensionPx: 640, // the agent only judges "is this a chat screenshot"; Core reads the original
+    },
+  },
+  models: {
+    mode: "merge",
+    providers: {
+      // OpenAI-compatible gateway; the key stays in ~/.openclaw/.env (VECTRON_API_KEY), only referenced here.
+      vectron: {
+        baseUrl: "https://api.vectron.meta-stone.com/v1",
+        api: "openai-completions",
+        apiKey: { source: "env", provider: "default", id: "VECTRON_API_KEY" },
+        models: [
+          {
+            id: "DeepSeek/DeepSeek-V4-Flash",
+            name: "DeepSeek/DeepSeek-V4-Flash (Custom Provider)",
+            contextWindow: 128000,
+            maxTokens: 4096,
+            input: ["text", "image"],
+            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+            reasoning: false,
+          },
+          {
+            id: "DeepSeek/DeepSeek-V4.1-Flash",
+            name: "DeepSeek/DeepSeek-V4.1-Flash (Custom Provider)",
+            contextWindow: 128000,
+            maxTokens: 4096,
+            input: ["text", "image"],
+            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+            reasoning: false,
+          },
+        ],
+      },
+    },
+  },
+}
